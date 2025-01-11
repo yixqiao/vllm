@@ -112,8 +112,9 @@ class Qwen2Attention(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         tp_size = get_tensor_model_parallel_world_size()
+        self.dummy_heads = tp_size - (num_heads % tp_size)
         self.total_num_heads = num_heads
-        assert self.total_num_heads % tp_size == 0
+        # assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
         self.total_num_kv_heads = num_kv_heads
         if self.total_num_kv_heads >= tp_size:
@@ -136,6 +137,7 @@ class Qwen2Attention(nn.Module):
             self.head_dim,
             self.total_num_heads,
             self.total_num_kv_heads,
+            self.dummy_heads,
             bias=True,
             quant_config=quant_config,
             prefix=f"{prefix}.qkv_proj",

@@ -682,8 +682,9 @@ class QKVParallelLinear(ColumnParallelLinear):
     def __init__(self,
                  hidden_size: int,
                  head_size: int,
-                 total_num_heads: int,
+                 total_num_heads: int, # TODO: refactor to num_heads
                  total_num_kv_heads: Optional[int] = None,
+                 dummy_heads: int = 0,
                  bias: bool = True,
                  skip_bias_add: bool = False,
                  params_dtype: Optional[torch.dtype] = None,
@@ -691,10 +692,13 @@ class QKVParallelLinear(ColumnParallelLinear):
                  prefix: str = ""):
         self.hidden_size = hidden_size
         self.head_size = head_size
-        self.total_num_heads = total_num_heads
+
+
+        self.total_num_heads = total_num_heads + dummy_heads
         if total_num_kv_heads is None:
             total_num_kv_heads = total_num_heads
         self.total_num_kv_heads = total_num_kv_heads
+
         # Divide the weight matrix along the last dimension.
         tp_size = get_tensor_model_parallel_world_size()
         self.num_heads = divide(self.total_num_heads, tp_size)
@@ -979,7 +983,6 @@ class QKVParallelLinear(ColumnParallelLinear):
 
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
-
 
 class RowParallelLinear(LinearBase):
     """Linear layer with row parallelism.

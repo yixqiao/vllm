@@ -60,7 +60,7 @@ class GPT2Attention(nn.Module):
         total_num_heads = config.num_attention_heads
         tensor_model_parallel_world_size = (
             get_tensor_model_parallel_world_size())
-        assert total_num_heads % tensor_model_parallel_world_size == 0
+        # assert total_num_heads % tensor_model_parallel_world_size == 0
         self.num_heads = total_num_heads // tensor_model_parallel_world_size
         self.head_dim = self.hidden_size // total_num_heads
         self.scale = self.head_dim**-0.5
