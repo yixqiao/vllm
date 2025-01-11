@@ -695,6 +695,7 @@ class QKVParallelLinear(ColumnParallelLinear):
 
 
         self.total_num_heads = total_num_heads + dummy_heads
+        print(f"Total heads: {self.total_num_heads}")
         if total_num_kv_heads is None:
             total_num_kv_heads = total_num_heads
         self.total_num_kv_heads = total_num_kv_heads
@@ -810,6 +811,10 @@ class QKVParallelLinear(ColumnParallelLinear):
                       param: Parameter,
                       loaded_weight: torch.Tensor,
                       loaded_shard_id: Optional[str] = None):
+        
+        # This function is called per GPU
+        # Make the shard loading so that the global position calculation is correct
+        # Then, if the GPU contains a filler (or its offset is larger than the global offset), fill with zeros
 
         # Special case for GGUF
         # initialize GGUF param after we know the quantize type
