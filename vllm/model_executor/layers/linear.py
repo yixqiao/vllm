@@ -924,6 +924,7 @@ class QKVParallelLinear(ColumnParallelLinear):
                 shard_offset = (self.num_heads +
                                 self.num_kv_heads) * self.head_size
                 shard_size = self.num_kv_heads * self.head_size
+
             # Special case for Quantized Weights.
             # If quantized, we need to adjust the offset and size to account
             # for the packing.
@@ -964,8 +965,18 @@ class QKVParallelLinear(ColumnParallelLinear):
             # bitsandbytes loads the weights of the specific portion
             # no need to narrow here
             if not use_bitsandbytes_4bit:
-                loaded_weight = loaded_weight.narrow(output_dim, start_idx,
-                                                     shard_size)
+                if start_idx + shard_size > loaded_weight.size(output_dim):
+                    # Create a tensor of zeros with the same size as the shard
+                    weight_shape = list(loaded_weight.shape)
+                    weight_shape[output_dim] = shard_size
+                    loaded_weight = torch.zeros(
+                        weight_shape,
+                        dtype=loaded_weight.dtype,
+                        device=loaded_weight.device
+                    )
+                else:
+                    loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
+
 
         # Special case for for AQLM codebooks.
         elif is_metadata:
