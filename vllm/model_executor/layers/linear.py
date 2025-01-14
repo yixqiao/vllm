@@ -693,9 +693,8 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.hidden_size = hidden_size
         self.head_size = head_size
 
-
+        self.dummy_heads = dummy_heads
         self.total_num_heads = total_num_heads + dummy_heads
-        print(f"Total heads: {self.total_num_heads}")
         if total_num_kv_heads is None:
             total_num_kv_heads = total_num_heads
         self.total_num_kv_heads = total_num_kv_heads
@@ -780,6 +779,33 @@ class QKVParallelLinear(ColumnParallelLinear):
                                                        shard_offset,
                                                        shard_size)
             self.weight_loader_v2(param, loaded_weight_shard, shard_id)
+    
+    def forward(self, input_: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass that slices out dummy heads from Q after computation.
+
+        Args:
+            input_ (torch.Tensor): Input tensor of shape [batch_size * seq_len, hidden_size].
+
+        Returns:
+            torch.Tensor: Output tensor with dummy heads removed, shape [batch_size * seq_len, real_num_heads * head_size].
+        """
+
+        output_parallel, _ = super().forward(input_)
+
+        real_num_heads = self.total_num_heads - self.dummy_heads
+        head_size = self.head_size
+
+        # Reshape to [batch_size * seq_len, total_num_heads, head_size]
+        output_parallel = output_parallel.view(-1, self.total_num_heads, head_size)
+
+        output_parallel = output_parallel[:, :real_num_heads, :]
+
+        # Reshape back to [batch_size * seq_len, real_num_heads * head_size]
+        output_parallel = output_parallel.contiguous().view(-1, real_num_heads * head_size)
+
+        return output_parallel, None
+
 
     def weight_loader_v2(self,
                          param: BasevLLMParameter,
