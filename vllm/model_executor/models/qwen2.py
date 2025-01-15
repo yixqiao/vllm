@@ -30,7 +30,7 @@ from transformers import Qwen2Config
 from vllm.attention import Attention, AttentionMetadata, AttentionType
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
-from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
+from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size, get_tensor_model_parallel_rank
 from vllm.logger import init_logger
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.layernorm import RMSNorm
@@ -115,7 +115,7 @@ class Qwen2Attention(nn.Module):
         self.dummy_heads = tp_size - (num_heads % tp_size)
         self.total_num_heads = num_heads
         # assert self.total_num_heads % tp_size == 0
-        self.num_heads = self.total_num_heads // tp_size
+        self.num_heads = (self.total_num_heads + self.dummy_heads) // tp_size
         self.total_num_kv_heads = num_kv_heads
         if self.total_num_kv_heads >= tp_size:
             # Number of KV heads is greater than TP size, so we partition
@@ -157,7 +157,7 @@ class Qwen2Attention(nn.Module):
             base=self.rope_theta,
             rope_scaling=rope_scaling,
         )
-        self.attn = Attention(self.num_heads,
+        self.attn = Attention(self.num_heads, # This num_heads must be different per GPU
                               self.head_dim,
                               self.scaling,
                               num_kv_heads=self.num_kv_heads,
@@ -174,7 +174,16 @@ class Qwen2Attention(nn.Module):
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        print(self.q_size, self.kv_size, self.kv_size)
+        print(qkv.size())
+        
+        tp_rank = get_tensor_model_parallel_rank()
+        dummy_heads_this_gpu = 0
+        if tp_rank < self.dummy_heads:
+            dummy_heads_this_gpu = 1
+        real_q_size = (self.num_heads - dummy_heads_this_gpu) * self.head_dim
+
+        q, k, v = qkv.split([real_q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
         output, _ = self.o_proj(attn_output)

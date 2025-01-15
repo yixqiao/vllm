@@ -781,30 +781,35 @@ class QKVParallelLinear(ColumnParallelLinear):
             self.weight_loader_v2(param, loaded_weight_shard, shard_id)
     
     def forward(self, input_: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass that slices out dummy heads from Q after computation.
-
-        Args:
-            input_ (torch.Tensor): Input tensor of shape [batch_size * seq_len, hidden_size].
-
-        Returns:
-            torch.Tensor: Output tensor with dummy heads removed, shape [batch_size * seq_len, real_num_heads * head_size].
-        """
-
         output_parallel, _ = super().forward(input_)
+        print(f"Original output_parallel size: {output_parallel.size()}")
 
-        real_num_heads = self.total_num_heads - self.dummy_heads
         head_size = self.head_size
 
-        # Reshape to [batch_size * seq_len, total_num_heads, head_size]
-        output_parallel = output_parallel.view(-1, self.total_num_heads, head_size)
+        q_size = self.num_heads * head_size
+        kv_size = self.num_kv_heads * head_size
 
-        output_parallel = output_parallel[:, :real_num_heads, :]
+        # Split the output_parallel tensor into Q, K, and V
+        q = output_parallel[:, :q_size]  # 512
+        k = output_parallel[:, q_size:q_size + kv_size]  # 128
+        v = output_parallel[:, q_size + kv_size:]  # 128
 
-        # Reshape back to [batch_size * seq_len, real_num_heads * head_size]
-        output_parallel = output_parallel.contiguous().view(-1, real_num_heads * head_size)
 
-        return output_parallel, None
+        tp_rank = get_tensor_model_parallel_rank()
+        dummy_heads_per_gpu = 0
+        if tp_rank < self.dummy_heads:
+            dummy_heads_per_gpu = 1
+        real_num_heads_per_gpu = self.num_heads - dummy_heads_per_gpu
+
+        real_q_size_per_gpu = real_num_heads_per_gpu * head_size
+        real_q = q[:, :real_q_size_per_gpu]
+
+        processed_output = torch.cat([real_q, k, v], dim=-1)
+
+        print(f"Processed output size: {processed_output.size()}")
+
+        return processed_output, None
+
 
 
     def weight_loader_v2(self,
