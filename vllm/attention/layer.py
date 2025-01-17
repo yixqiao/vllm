@@ -14,6 +14,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.platforms import _Backend, current_platform
 from vllm.utils import direct_register_custom_op
+from vllm.distributed import (get_tensor_model_parallel_rank)
 
 
 class Attention(nn.Module):
@@ -44,6 +45,7 @@ class Attention(nn.Module):
         attn_type: str = AttentionType.DECODER,
     ) -> None:
         super().__init__()
+
         if per_layer_sliding_window is not None:
             # per-layer sliding window
             sliding_window = per_layer_sliding_window

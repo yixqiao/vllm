@@ -10,7 +10,9 @@ from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               split_tensor_along_last_dim,
                               tensor_model_parallel_all_gather,
-                              tensor_model_parallel_all_reduce)
+                              tensor_model_parallel_all_reduce,
+                              get_current_tp_rank_partition_size,
+                              get_current_tp_rank_partition_offset)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
@@ -693,6 +695,8 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.hidden_size = hidden_size
         self.head_size = head_size
 
+        # For dummy heads, only affects model loading
+        # Calculation still proceeds as planned
         self.dummy_heads = dummy_heads
         self.total_num_heads = total_num_heads + dummy_heads
         if total_num_kv_heads is None:
@@ -780,35 +784,35 @@ class QKVParallelLinear(ColumnParallelLinear):
                                                        shard_size)
             self.weight_loader_v2(param, loaded_weight_shard, shard_id)
     
-    def forward(self, input_: torch.Tensor) -> torch.Tensor:
-        output_parallel, _ = super().forward(input_)
-        print(f"Original output_parallel size: {output_parallel.size()}")
+    # def forward(self, input_: torch.Tensor) -> torch.Tensor:
+    #     output_parallel, _ = super().forward(input_)
+    #     print(f"Original output_parallel size: {output_parallel.size()}")
 
-        head_size = self.head_size
+    #     head_size = self.head_size
 
-        q_size = self.num_heads * head_size
-        kv_size = self.num_kv_heads * head_size
+    #     q_size = self.num_heads * head_size
+    #     kv_size = self.num_kv_heads * head_size
 
-        # Split the output_parallel tensor into Q, K, and V
-        q = output_parallel[:, :q_size]  # 512
-        k = output_parallel[:, q_size:q_size + kv_size]  # 128
-        v = output_parallel[:, q_size + kv_size:]  # 128
+    #     # Split the output_parallel tensor into Q, K, and V
+    #     q = output_parallel[:, :q_size]  # 512
+    #     k = output_parallel[:, q_size:q_size + kv_size]  # 128
+    #     v = output_parallel[:, q_size + kv_size:]  # 128
 
 
-        tp_rank = get_tensor_model_parallel_rank()
-        dummy_heads_per_gpu = 0
-        if tp_rank < self.dummy_heads:
-            dummy_heads_per_gpu = 1
-        real_num_heads_per_gpu = self.num_heads - dummy_heads_per_gpu
+    #     tp_rank = get_tensor_model_parallel_rank()
+    #     dummy_heads_per_gpu = 0
+    #     if tp_rank < self.dummy_heads:
+    #         dummy_heads_per_gpu = 1
+    #     real_num_heads_per_gpu = self.num_heads - dummy_heads_per_gpu
 
-        real_q_size_per_gpu = real_num_heads_per_gpu * head_size
-        real_q = q[:, :real_q_size_per_gpu]
+    #     real_q_size_per_gpu = real_num_heads_per_gpu * head_size
+    #     real_q = q[:, :real_q_size_per_gpu]
 
-        processed_output = torch.cat([real_q, k, v], dim=-1)
+    #     processed_output = torch.cat([real_q, k, v], dim=-1)
 
-        print(f"Processed output size: {processed_output.size()}")
+    #     print(f"Processed output size: {processed_output.size()}")
 
-        return processed_output, None
+    #     return processed_output, None
 
 
 
@@ -1076,7 +1080,10 @@ class RowParallelLinear(LinearBase):
         # Divide the weight matrix along the last dimension.
         self.tp_rank = get_tensor_model_parallel_rank()
         self.tp_size = get_tensor_model_parallel_world_size()
-        self.input_size_per_partition = divide(input_size, self.tp_size)
+
+        self.tp_rank = get_tensor_model_parallel_rank()
+        self.input_size_per_partition = get_current_tp_rank_partition_size(
+            input_size, self.tp_rank, self.tp_size)
         assert self.quant_method is not None
 
         self.quant_method.create_weights(
@@ -1128,8 +1135,19 @@ class RowParallelLinear(LinearBase):
         if input_dim is not None and not use_bitsandbytes_4bit:
             shard_size = param_data.shape[input_dim]
             start_idx = tp_rank * shard_size
-            loaded_weight = loaded_weight.narrow(input_dim, start_idx,
-                                                 shard_size)
+            if start_idx + shard_size > loaded_weight.size(input_dim):
+                # Create a tensor of zeros with the same size as the shard
+                weight_shape = list(loaded_weight.shape)
+                weight_shape[input_dim] = shard_size
+                loaded_weight = torch.zeros(
+                    weight_shape,
+                    dtype=loaded_weight.dtype,
+                    device=loaded_weight.device
+                )
+            else:
+                loaded_weight = loaded_weight.narrow(input_dim, start_idx, shard_size)
+            # loaded_weight = loaded_weight.narrow(input_dim, start_idx,
+            #                                      shard_size)
 
         # Special case for loading scales off disk, which often do not
         # have a shape (such as in the case of AutoFP8).

@@ -1150,6 +1150,50 @@ def get_tensor_model_parallel_rank():
     return get_tp_group().rank_in_group
 
 
+# From https://github.com/vllm-project/vllm/pull/5367
+def get_current_tp_rank_partition_offset(total_size: int,
+                                         tp_rank: Optional[int] = None,
+                                         tp_size: Optional[int] = None,
+                                         multiple_of: int = 1) -> int:
+    if tp_rank is None:
+        tp_rank = get_tensor_model_parallel_rank()
+
+    if tp_size is None:
+        tp_size = get_tensor_model_parallel_world_size()
+
+    assert total_size % multiple_of == 0
+    total_size = total_size // multiple_of
+    return ((total_size // tp_size) * tp_rank +
+            min(total_size % tp_size, tp_rank)) * multiple_of
+
+
+def get_current_tp_rank_partition_size(total_size: int,
+                                       tp_rank: Optional[int] = None,
+                                       tp_size: Optional[int] = None,
+                                       multiple_of: int = 1) -> int:
+    if tp_rank is None:
+        tp_rank = get_tensor_model_parallel_rank()
+
+    if tp_size is None:
+        tp_size = get_tensor_model_parallel_world_size()
+
+    assert total_size % multiple_of == 0
+    total_size = total_size // multiple_of
+    return ((total_size // tp_size) +
+            (total_size % tp_size > tp_rank)) * multiple_of
+
+def get_num_heads(total_num_heads, tp_rank, tp_size):
+    # Returns (real, dummy, total)
+    real_heads = total_num_heads // tp_size
+    dummy_heads = 0
+    if total_num_heads % tp_size != 0:
+        num_dummy = total_num_heads % tp_size
+        if tp_rank < num_dummy:
+            dummy_heads += 1
+        else:
+            real_heads += 1
+    return (real_heads, dummy_heads, real_heads + dummy_heads)
+
 def destroy_model_parallel():
     """Set the groups to none and destroy them."""
     global _TP
