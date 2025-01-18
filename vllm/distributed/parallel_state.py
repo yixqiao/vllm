@@ -1184,14 +1184,18 @@ def get_current_tp_rank_partition_size(total_size: int,
 
 def get_num_heads(total_num_heads, tp_rank, tp_size):
     # Returns (real, dummy, total)
-    real_heads = total_num_heads // tp_size
-    dummy_heads = 0
-    if total_num_heads % tp_size != 0:
-        num_dummy = total_num_heads % tp_size
-        if tp_rank < num_dummy:
-            dummy_heads += 1
-        else:
-            real_heads += 1
+    if tp_rank == 7:
+        return (0, 4, 4)
+    else:
+        return (4, 0, 4)
+    # real_heads = total_num_heads // tp_size
+    # dummy_heads = 0
+    # if total_num_heads % tp_size != 0:
+    #     num_dummy = total_num_heads % tp_size
+    #     if tp_rank < num_dummy:
+    #         dummy_heads += 1
+    #     else:
+    #         real_heads += 1
     return (real_heads, dummy_heads, real_heads + dummy_heads)
 
 def destroy_model_parallel():

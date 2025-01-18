@@ -1001,14 +1001,16 @@ class QKVParallelLinear(ColumnParallelLinear):
             # no need to narrow here
             if not use_bitsandbytes_4bit:
                 if start_idx + shard_size > loaded_weight.size(output_dim):
+                    # print("LOADERSIZE", start_idx, shard_size, loaded_weight.size())
                     # Create a tensor of zeros with the same size as the shard
                     weight_shape = list(loaded_weight.shape)
                     weight_shape[output_dim] = shard_size
-                    loaded_weight = torch.zeros(
-                        weight_shape,
-                        dtype=loaded_weight.dtype,
-                        device=loaded_weight.device
-                    )
+                    loaded_weight = torch.full(
+                    weight_shape,
+                    fill_value=0,
+                    dtype=loaded_weight.dtype,
+                    device=loaded_weight.device
+                )
                 else:
                     loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
 

@@ -115,7 +115,7 @@ class Qwen2Attention(nn.Module):
         self.total_num_heads = num_heads
         # assert self.total_num_heads % tp_size == 0
 
-        self.real_heads, _, self.num_heads = get_num_heads(self.total_num_heads, get_tensor_model_parallel_rank(), tp_size)
+        self.real_heads, self.dummy_heads, self.num_heads = get_num_heads(self.total_num_heads, get_tensor_model_parallel_rank(), tp_size)
         self.total_num_kv_heads = num_kv_heads
         if self.total_num_kv_heads >= tp_size:
             # Number of KV heads is greater than TP size, so we partition
@@ -173,14 +173,37 @@ class Qwen2Attention(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
+        if self.dummy_heads > 0:
+            return 
+
         qkv, _ = self.qkv_proj(hidden_states)
 
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+
         q, k = self.rotary_emb(positions, q, k)
+        
+        if self.dummy_heads > 0:
+            # print("DUMMYCOUNT", self.dummy_heads)
+
+            q = q.view(q.size(0), self.num_heads, self.head_dim)
+            
+            # Zero out the dummy heads
+            q[:, :, :] = -1000000
+            # q[:, -self.dummy_heads:, :] = -1000
+            
+            q = q.view(q.size(0), -1)
+
+        # print(q)
+        # assert(False)
+
         attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+
+        # if self.dummy_heads > 0:
+        #     # print(attn_output)
+        #     attn_output[:, :] = 10
+
         output, _ = self.o_proj(attn_output)
         # print("FORWARD SIZE", output.size())
-        # output = output[:, :-4 * self.head_dim]
         return output
 
 
